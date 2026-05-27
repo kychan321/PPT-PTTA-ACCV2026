@@ -30,6 +30,11 @@ def parse_config():
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument("--model_Pretrain", default='./training/...')
 
+    parser.add_argument("--save_preds", action="store_true",
+                    help="Save per-sample past, future GT, and predictions to results/predictions.")
+    parser.add_argument("--pred_tag", type=str, default="clean",
+                    help="Tag used for saved prediction npz filename.")
+
     parser.add_argument("--reproduce", action="store_true")
     parser.add_argument("--vis", action="store_true")
 
