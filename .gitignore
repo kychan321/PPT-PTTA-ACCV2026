@@ -1,0 +1,46 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+env/
+.venv/
+conda_env/
+
+# VSCode / OS files
+.vscode/
+.DS_Store
+Thumbs.db
+
+# PPT datasets and images
+data/
+vis_results/
+
+# Pretrained models, checkpoints, trained models
+training/
+checkpoints/
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+model_*
+*.tar
+
+# Experiment outputs
+results/
+outputs/
+logs/
+runs/
+wandb/
+
+# Large prediction files
+*.npz
+*.npy
+
+# Temporary files
+*.tmp
+*.log
