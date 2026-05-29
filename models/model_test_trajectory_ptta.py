@@ -6,7 +6,7 @@ import numpy as np
 from einops import repeat
 from copy import deepcopy
 
-from models.adapter import ResidualAdapter, TrajectoryPretextHead
+from models.adapter import ResidualAdapter, TrajectoryPretextHead, next_position_loss
 
 
 class Final_Model(nn.Module):
@@ -210,6 +210,132 @@ class Final_Model(nn.Module):
         feat = self.extract_adapted_past_feat(past, actor_token=actor_token)
         pred_next = self.pretext_next_head(feat[:, :-1, :])
         return pred_next
+    
+    def pretext_next_loss(
+        self,
+        past,
+        valid_mask=None,
+        loss_type="smooth_l1",
+        actor_token=None,
+        require_source_valid=False,
+        return_stats=False,
+    ):
+        """
+        Pretext-consistent next-position self-supervised loss for P-TTA.
+
+        This loss reuses PPT Stage-I philosophy at test time:
+            x1 -> x2
+            x2 -> x3
+            ...
+            x7 -> x8
+
+        Args:
+            past:
+                Observed past trajectory, shape [B, 8, 2].
+                In robust/P-TTA evaluation this will usually be x_shift,
+                i.e., the corrupted observed past actually seen by the model.
+
+            valid_mask:
+                Optional bool tensor, shape [B, 8].
+                True means the point is actually available.
+                False means the point was missing/dropped and artificially filled.
+
+                Important:
+                    If x3 is missing and filled, then x2 -> x3 should NOT
+                    use x3 as a self-supervised target. Therefore we mask
+                    target positions x2~x8 using valid_mask[:, 1:].
+
+            loss_type:
+                "smooth_l1", "l1", or "l2".
+
+            actor_token:
+                Optional actor-specific token. Currently unused in the ETH/UCY
+                pipeline, but kept for future extension.
+
+            require_source_valid:
+                If False:
+                    Use a transition as long as the target x_{t+1} is valid.
+                    This matches the minimal PPT Task-I self-supervision rule.
+
+                If True:
+                    Use a transition only when both source x_t and target x_{t+1}
+                    are valid. This is stricter and can be tested as an ablation.
+
+            return_stats:
+                If True, return (loss, stats_dict).
+
+        Returns:
+            loss:
+                Scalar tensor.
+
+            stats_dict, optional:
+                Contains the number of valid transition targets.
+        """
+        pred_next = self.predict_next_from_past(
+            past,
+            actor_token=actor_token
+        )  # [B, 7, 2]
+
+        target_next = past[:, 1:, :]  # [B, 7, 2]
+
+        if valid_mask is None:
+            final_valid = torch.ones(
+                target_next.shape[:2],
+                dtype=torch.bool,
+                device=target_next.device
+            )
+        else:
+            if valid_mask.dtype != torch.bool:
+                valid_mask = valid_mask.bool()
+
+            # Target positions are x2~x8.
+            final_valid = valid_mask[:, 1:]
+
+            if require_source_valid:
+                # Source positions are x1~x7.
+                source_valid = valid_mask[:, :-1]
+                final_valid = final_valid & source_valid
+
+        if final_valid.sum() == 0:
+            loss = pred_next.sum() * 0.0
+        else:
+            # Use the utility function from adapter.py.
+            # It masks target positions using valid_mask[:, 1:].
+            if not require_source_valid:
+                loss = next_position_loss(
+                    pred_next=pred_next,
+                    target_next=target_next,
+                    valid_mask=valid_mask,
+                    loss_type=loss_type
+                )
+            else:
+                # For the stricter source+target valid case, compute directly.
+                if loss_type == "smooth_l1":
+                    point_loss = F.smooth_l1_loss(
+                        pred_next,
+                        target_next,
+                        reduction="none"
+                    ).sum(dim=-1)
+                elif loss_type == "l1":
+                    point_loss = torch.abs(pred_next - target_next).sum(dim=-1)
+                elif loss_type == "l2":
+                    point_loss = torch.norm(pred_next - target_next, dim=-1)
+                else:
+                    raise ValueError(f"Unsupported loss_type: {loss_type}")
+
+                loss = point_loss[final_valid].mean()
+
+        if return_stats:
+            stats = {
+                "num_valid_next_targets": int(final_valid.sum().detach().cpu().item()),
+                "num_total_next_targets": int(final_valid.numel()),
+                "valid_next_ratio": float(
+                    final_valid.float().mean().detach().cpu().item()
+                ),
+            }
+            return loss, stats
+
+        return loss
 
     # ---------------------------------------------------------
     # Destination prediction utility
