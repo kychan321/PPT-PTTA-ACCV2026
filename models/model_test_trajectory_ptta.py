@@ -135,6 +135,49 @@ class Final_Model(nn.Module):
             params += list(self.pretext_head.parameters())
 
         return [p for p in params if p.requires_grad]
+    
+    def get_ptta_state(self):
+        """
+        Return only P-TTA module states.
+
+        This is intentionally small:
+            - past_adapter
+            - pretext_head
+
+        We do not need to save the whole PPT backbone because it is loaded
+        from the original pretrained PPT checkpoint.
+        """
+        return {
+            "past_adapter": self.past_adapter.state_dict(),
+            "pretext_head": self.pretext_head.state_dict(),
+        }
+
+    def load_ptta_state(self, ckpt_path, map_location="cpu", strict=True):
+        """
+        Load offline-initialized P-TTA modules.
+
+        Args:
+            ckpt_path:
+                Path to a checkpoint created by trainer_ptta_init.py.
+
+            map_location:
+                Torch map_location.
+
+            strict:
+                Whether to strictly load adapter/head state_dicts.
+        """
+        ckpt = torch.load(ckpt_path, map_location=map_location)
+
+        if "past_adapter" not in ckpt or "pretext_head" not in ckpt:
+            raise KeyError(
+                "Invalid P-TTA init checkpoint. "
+                "Expected keys: 'past_adapter' and 'pretext_head'."
+            )
+
+        self.past_adapter.load_state_dict(ckpt["past_adapter"], strict=strict)
+        self.pretext_head.load_state_dict(ckpt["pretext_head"], strict=strict)
+
+        return ckpt
 
     def print_trainable_parameters(self):
         total_num = sum(p.numel() for p in self.parameters())
