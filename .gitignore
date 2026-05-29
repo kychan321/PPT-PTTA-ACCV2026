@@ -27,7 +27,6 @@ checkpoints/
 *.ckpt
 *.pkl
 *.pickle
-model_*
 *.tar
 
 # Experiment outputs
